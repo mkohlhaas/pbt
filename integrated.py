@@ -50,7 +50,8 @@ def random_map(func: Callable[[T], U], gen: Random[T]) -> Random[U]:
     return Random(lambda: func(gen.generate()))
 
 
-def random_mapN(func: Callable[..., T], gens: Iterable[Random[Any]]) -> Random[T]:
+def random_mapN(func: Callable[..., T],
+                gens: Iterable[Random[Any]]) -> Random[T]:
     return Random(lambda: func(gen.generate() for gen in gens))
 
 
@@ -85,7 +86,8 @@ def shrink_int(low: int, high: int) -> Shrink[int]:
 
 class CandidateTree(Generic[T]):
 
-    def __init__(self, value: T, candidates: Iterable[CandidateTree[T]]) -> None:
+    def __init__(self, value: T,
+                 candidates: Iterable[CandidateTree[T]]) -> None:
         self._value = value
         (self._candidates,) = itertools.tee(candidates, 1)
 
@@ -148,7 +150,8 @@ def tree_map2(
     )
 
 
-def tree_mapN(f: Callable[..., U], trees: Iterable[CandidateTree[Any]]) -> CandidateTree[U]:
+def tree_mapN(f: Callable[..., U],
+              trees: Iterable[CandidateTree[Any]]) -> CandidateTree[U]:
     trees = list(trees)
     value = f([tree.value for tree in trees])
 
@@ -254,13 +257,17 @@ class TestResult:
 Property = Gen[TestResult]
 
 
-def for_all(gen: Gen[T], property: Callable[[T], Union[Property, bool]]) -> Property:
+def for_all(gen: Gen[T],
+            property: Callable[[T], Union[Property, bool]]) -> Property:
     def property_wrapper(value: T) -> Property:
         outcome = property(value)
         if isinstance(outcome, bool):
             return constant(TestResult(is_success=outcome, arguments=(value,)))
         else:
-            return map(lambda inner_out: replace(inner_out, arguments=(value,) + inner_out.arguments), outcome)
+            return map(
+                lambda inner_out:
+                replace(inner_out, arguments=(value,) + inner_out.arguments),
+                outcome)
     return bind(property_wrapper, gen)
 
 
@@ -286,12 +293,12 @@ def test(property: Property):
     print("Success: 100 tests passed.")
 
 
-wrong_sum = for_all(list_of(int_between(-10, 10)), lambda l:
+wrong_sum = for_all(list_of(int_between(-10, 10)), lambda lst:
                     for_all(int_between(-10, 10), lambda i:
-                    sum(e+i for e in l) == sum(l) + (len(l) + 1) * i))
+                    sum(e+i for e in lst) == sum(lst) + (len(lst) + 1) * i))
 
-equality = for_all(int_between(-10, 10), lambda l:
-                   for_all(int_between(-10, 10), lambda i: l == i))
+equality = for_all(int_between(-10, 10), lambda lst:
+                   for_all(int_between(-10, 10), lambda i: lst == i))
 
 
 ages = int_between(0, 100)

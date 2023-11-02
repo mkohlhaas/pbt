@@ -67,8 +67,6 @@ class CandidateTree(Generic[T]):
 def tree_from_shrink(value: T, shrink: Shrink[T]) -> CandidateTree[T]:
     return CandidateTree(
         value=value,
-        # due to the way python iterators work, this can only be evaluated
-        # once. But that's OK for our purposes.
         candidates=(tree_from_shrink(v, shrink) for v in shrink(value))
     )
 
@@ -85,6 +83,7 @@ Property = Generator[CandidateTree[TestResult]]
 def for_all(gen: Generator[T],
             shrink: Shrink[T],
             property: Callable[[T], bool]) -> Property:
+
     def property_wrapper(value: T) -> CandidateTree[TestResult]:
         search_tree = tree_from_shrink(value, shrink)
         search_tree_test = tree_map(
@@ -97,10 +96,10 @@ def for_all(gen: Generator[T],
 
 
 def test(property: Property):
+    # 2. Shrinking
     def do_shrink(tree: CandidateTree[TestResult]) -> None:
         for smaller in tree.candidates:
             if not smaller.value.is_success:
-                # cool, found a smaller value that still fails - keep shrinking
                 print(f"Shrinking: found smaller arguments {
                       smaller.value.arguments}")
                 do_shrink(smaller)
@@ -108,6 +107,7 @@ def test(property: Property):
         print(f"Shrinking: giving up - smallest arguments found {
               tree.value.arguments}")
 
+    # 1. Exploration
     for test_number in range(100):
         result = property.generate()
         if not result.value.is_success:
@@ -121,7 +121,7 @@ def test(property: Property):
 wrong_shrink_1 = for_all(
     int_between(0, 20),
     shrink_int,
-    lambda i: i <= 3
+    lambda n: n <= 3
 )
 
 
@@ -150,5 +150,6 @@ def shrink_list_of_person(value: list[Person]) -> Iterable[list[Person]]:
 
 
 prop_wrong_sort_by_age = for_all(
-    list_of_person, shrink_list_of_person,
+    list_of_person,
+    shrink_list_of_person,
     lambda persons_in: is_valid(persons_in, wrong_sort_by_age(persons_in)))

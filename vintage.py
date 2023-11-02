@@ -51,8 +51,9 @@ def mapN(f: Callable[..., T], gens: Iterable[Generator[Any]]) -> Generator[T]:
     return Generator(lambda: f(*[gen.generate() for gen in gens]))
 
 
-def list_of_length(length: int, gen: Generator[T]) -> Generator[list[T]]:
-    return mapN(lambda *args: list(args), [gen] * length)
+def list_of_length(n: int, gen: Generator[T]) -> Generator[list[T]]:
+    "n is the length of the lists"
+    return mapN(lambda *args: list(args), [gen] * n)
 
 
 simple_name = map("".join, list_of_length(6, letter))
