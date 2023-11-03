@@ -18,7 +18,7 @@ class Shrink(Protocol[T]):
         ...
 
 
-def shrink_int(value: int) -> Iterable[int]:
+def shrink_int(value: int) -> Shrink[int]:
     if value != 0:
         yield 0
     current = abs(value) // 2
@@ -27,13 +27,13 @@ def shrink_int(value: int) -> Iterable[int]:
         current = current // 2
 
 
-def shrink_letter(value: str) -> Iterable[str]:
+def shrink_letter(value: str) -> Shrink[str]:
     for candidate in ('a', 'b', 'c'):
         if candidate < value:
             yield candidate
 
 
-def shrink_list(value: list[T], shrink_elem: Shrink[T]) -> Iterable[list[T]]:
+def shrink_list(value: list[T], shrink_elem: Shrink[T]) -> Shrink[list[T]]:
     length = len(value)
     if length > 0:
         yield []
@@ -153,3 +153,8 @@ prop_wrong_sort_by_age = for_all(
     list_of_person,
     shrink_list_of_person,
     lambda persons_in: is_valid(persons_in, wrong_sort_by_age(persons_in)))
+
+prop_weird_shrink = for_all(
+    int_between(-20, -1),
+    shrink_int,
+    lambda i: i * i < 0)

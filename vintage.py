@@ -47,7 +47,8 @@ def map(f: Callable[[T], U], gen: Generator[T]) -> Generator[U]:
 letter = map(chr, int_between(ord('a'), ord('z')))
 
 
-def mapN(f: Callable[..., T], gens: Iterable[Generator[Any]]) -> Generator[T]:
+def mapN(f: Callable[..., T],
+         gens: Iterable[Generator[Any]]) -> Generator[T]:
     return Generator(lambda: f(*[gen.generate() for gen in gens]))
 
 
@@ -218,3 +219,7 @@ prop_wrong_sort_by_age = for_all(list_of_person_random_length,
                                  lambda persons_in:
                                  is_valid(persons_in,
                                           wrong_sort_by_age(persons_in)))
+
+prop_weird_shrink = for_all(
+    int_between(-20, -1),
+    lambda i: i * i < 0)

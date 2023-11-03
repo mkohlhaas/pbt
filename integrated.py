@@ -1,3 +1,12 @@
+# Everything now is in terms of CandidateTree Generators instead
+# of simple Generators which leads to unification of generation and shrinking.
+
+# compare map, mapN, bind, ... with vintage.py's versions
+# also age, letter, ...
+
+# no explicit shrink_list, built into the CandidateTree
+# see function tree_mapN
+
 from __future__ import annotations
 from copy import copy
 
@@ -12,21 +21,10 @@ T = TypeVar("T")
 U = TypeVar("U")
 V = TypeVar("V")
 
-# class Arbitrary(Generic[Value]):
-#     def generate(self) -> Value:
-#         ...
-
-#     def shrink(self, value: Value) -> Iterable[Value]:
-#         ...
-
-# def shrink_map(f: Callable[[T],U], s: Shrink[T]) -> Shrink[U]:
-#     def shrinker(value: U) -> Iterable[U]:
-#         for candidate in s(...):
-#             yield f(candidate)
-#     return shrinker
+# Generators ####################################################
 
 
-class Random(Generic[T]):
+class Generator(Generic[T]):
     def __init__(self, generator: Callable[[], T]):
         self._generator = generator
 
@@ -34,30 +32,36 @@ class Random(Generic[T]):
         return self._generator()
 
 
-def random_sample(gen: Random[T]) -> list[T]:
+def gen_sample(gen: Generator[T]) -> list[T]:
     return [gen.generate() for _ in range(10)]
 
 
-def random_constant(value: T) -> Random[T]:
-    return Random(lambda: value)
+def gen_constant(value: T) -> Generator[T]:
+    return Generator(lambda: value)
 
 
-def random_int_between(low: int, high: int) -> Random[int]:
-    return Random(lambda: random.randint(low, high))
+pure = gen_constant
 
 
-def random_map(func: Callable[[T], U], gen: Random[T]) -> Random[U]:
-    return Random(lambda: func(gen.generate()))
+def gen_int_between(low: int, high: int) -> Generator[int]:
+    return Generator(lambda: random.randint(low, high))
 
 
-def random_mapN(func: Callable[..., T],
-                gens: Iterable[Random[Any]]) -> Random[T]:
-    return Random(lambda: func(gen.generate() for gen in gens))
+def gen_map(f: Callable[[T], U], gen: Generator[T]) -> Generator[U]:
+    return Generator(lambda: f(gen.generate()))
 
 
-def random_bind(func: Callable[[T], Random[U]], gen: Random[T]) -> Random[U]:
-    return Random(func(gen.generate()).generate)
+def gen_mapN(f: Callable[..., T],
+             gens: Iterable[Generator[Any]]) -> Generator[T]:
+    return Generator(lambda: f(gen.generate() for gen in gens))
 
+
+def gen_bind(func: Callable[[T], Generator[U]],
+             gen: Generator[T]) -> Generator[U]:
+    return Generator(func(gen.generate()).generate)
+
+
+# Shrinkers ######################################################
 
 class Shrink(Protocol[T]):
     def __call__(self, value: T) -> Iterable[T]:
@@ -84,11 +88,14 @@ def shrink_int(low: int, high: int) -> Shrink[int]:
     return shrinker
 
 
+# Candidates #####################################################
+
 class CandidateTree(Generic[T]):
 
     def __init__(self, value: T,
                  candidates: Iterable[CandidateTree[T]]) -> None:
         self._value = value
+        # return a cached iterator
         (self._candidates,) = itertools.tee(candidates, 1)
 
     @property
@@ -97,7 +104,19 @@ class CandidateTree(Generic[T]):
 
     @property
     def candidates(self):
+        # reset the iterator to the start
         return copy(self._candidates)
+
+    def __str__(self, level=0):
+        ret = "\t"*level+repr(self.value)+"\n"
+        for candidate in self.candidates:
+            ret += candidate.__str__(level+1)
+        return ret
+
+    def __repr__(self):
+        return '<tree node representation>'
+
+# instead of randomly generating values T we are generating entire trees of T
 
 
 def tree_constant(value: T) -> CandidateTree[T]:
@@ -115,30 +134,25 @@ def tree_from_shrink(value: T, shrink: Shrink[T]) -> CandidateTree[T]:
 
 
 def tree_map(f: Callable[[T], U], tree: CandidateTree[T]) -> CandidateTree[U]:
-    value = f(tree.value)
-    candidates = (tree_map(f, candidate) for candidate in tree.candidates)
     return CandidateTree(
-        value=value,
-        candidates=candidates
+        value=f(tree.value),
+        candidates=(tree_map(f, candidate) for candidate in tree.candidates)
     )
 
 
-def tree_map2(
-    f: Callable[[T, U], V],
-    tree_1: CandidateTree[T],
-    tree_2: CandidateTree[U],
-) -> CandidateTree[V]:
+def tree_map2(f: Callable[[T, U], V],
+              tree_1: CandidateTree[T],
+              tree_2: CandidateTree[U],
+              ) -> CandidateTree[V]:
 
     value = f(tree_1.value, tree_2.value)
 
     candidates_1 = (
-        tree_map2(f, candidate, tree_2)
-        for candidate in tree_1.candidates
+        tree_map2(f, candidate, tree_2) for candidate in tree_1.candidates
     )
 
     candidates_2 = (
-        tree_map2(f, tree_1, candidate)
-        for candidate in tree_2.candidates
+        tree_map2(f, tree_1, candidate) for candidate in tree_2.candidates
     )
 
     return CandidateTree(
@@ -148,6 +162,11 @@ def tree_map2(
             candidates_2
         )
     )
+
+
+tree_1 = tree_from_shrink(1, shrink_int(0, 10))
+tree_2 = tree_from_shrink(3, shrink_int(0, 10))
+tree_tuples = tree_map2(lambda x, y: (x, y), tree_1, tree_2)
 
 
 def tree_mapN(f: Callable[..., U],
@@ -172,15 +191,9 @@ def tree_mapN(f: Callable[..., U],
     )
 
 
-def tree_bind(
-    f: Callable[[T], CandidateTree[U]],
-    tree: CandidateTree[T]
-) -> CandidateTree[U]:
-
-    # here we have a choice whether to shrink the T first, or U.
-    # Assuming we'd like to get as small as possible as soon as possible
-    # (reducing total nb of shrinks), and that a smaller T into property
-    # will result in a smaller U, we shrink T first.
+def tree_bind(f: Callable[[T], CandidateTree[U]],
+              tree: CandidateTree[T]
+              ) -> CandidateTree[U]:
     tree_u = f(tree.value)
     candidates = (
         tree_bind(f, candidate)
@@ -196,57 +209,68 @@ def tree_bind(
     )
 
 
-Gen = Random[CandidateTree[T]]
+def letters(length: int):
+    if length == 0:
+        return tree_constant('')
+    abc = tree_from_shrink(ord('c'), shrink_int(ord('a'), ord('c')))
+    abc_repeat = tree_map(lambda o: chr(o) * length, abc)
+    return abc_repeat
 
 
-def constant(value: T) -> Gen[T]:
-    return random_constant(tree_constant(value))
+tree_list_length = tree_from_shrink(3, shrink_int(0, 3))
+tree_bound = tree_bind(letters, tree_list_length)
 
 
-def int_between(low: int, high: int) -> Gen[int]:
-    return random_map(lambda v: tree_from_shrink(v, shrink_int(low, high)),
-                      random_int_between(low, high))
+# Candidate Generators ##########################################
+
+CTGenerator = Generator[CandidateTree[T]]
 
 
-def map(func: Callable[[T], U], gen: Gen[T]) -> Gen[U]:
-    return random_map(lambda tree: tree_map(func, tree), gen)
+def always(value: T) -> CTGenerator[T]:
+    return gen_constant(tree_constant(value))
 
 
-def mapN(f: Callable[..., T], gens: Iterable[Gen[Any]]) -> Gen[T]:
-    return random_mapN(lambda trees: tree_mapN(f, trees), gens)
+pure = always
+
+constant = always
 
 
-def list_of_gen(gens: Iterable[Gen[Any]]) -> Gen[list[Any]]:
+def int_between(low: int, high: int) -> CTGenerator[int]:
+    return gen_map(lambda v: tree_from_shrink(v, shrink_int(low, high)),
+                   gen_int_between(low, high))
+
+
+def map(f: Callable[[T], U], gen: CTGenerator[T]) -> CTGenerator[U]:
+    return gen_map(lambda tree: tree_map(f, tree), gen)
+
+
+def mapN(f: Callable[..., T],
+         gens: Iterable[CTGenerator[Any]]) -> CTGenerator[T]:
+    return gen_mapN(lambda trees: tree_mapN(f, trees), gens)
+
+
+def list_of_gen(gens: Iterable[CTGenerator[Any]]) -> CTGenerator[list[Any]]:
     return mapN(lambda args: list(args), gens)
 
 
-def list_of_length(length: int, gen: Gen[T]) -> Gen[list[T]]:
-    gen_of_list = list_of_gen([gen] * length)
-    return gen_of_list
+def list_of_length(length: int, gen: CTGenerator[T]) -> CTGenerator[list[T]]:
+    return list_of_gen([gen] * length)
 
 
-def bind(func: Callable[[T], Gen[U]], gen: Gen[T]) -> Gen[U]:
-    # the same pattern doesn't work:
-    # return random_bind(lambda search_tree:
-    # search_tree_bind(func, search_tree), gen)
-    # because func returns a Random[SearchTree[U]] and search_tree_bind
-    # does not know how to deal with Random.
-    # We need to get a value out of Random, by generating it:
+def bind(f: Callable[[T], CTGenerator[U]],
+         gen: CTGenerator[T]) -> CTGenerator[U]:
     def inner_bind(value: T) -> CandidateTree[U]:
-        random_tree = func(value)
+        random_tree = f(value)
         return random_tree.generate()
-    # this effectively means that while shrinking the outer value, we are
-    # randomly re-generating the inner value! Just like we did in vintage
-    # as well, in for_all.
-    return random_map(lambda tree: tree_bind(inner_bind, tree), gen)
-
-# now we can do things like generate a list of randomly chosen length
+    return gen_map(lambda tree: tree_bind(inner_bind, tree), gen)
 
 
-def list_of(gen: Gen[T]) -> Gen[list[T]]:
+def list_of(gen: CTGenerator[T]) -> CTGenerator[list[T]]:
     length = int_between(0, 10)
     return bind(lambda lst: list_of_length(lst, gen), length)
 
+
+# Properties ####################################################
 
 @dataclass(frozen=True)
 class TestResult:
@@ -254,18 +278,18 @@ class TestResult:
     arguments: tuple[Any, ...]
 
 
-Property = Gen[TestResult]
+Property = CTGenerator[TestResult]
 
 
-def for_all(gen: Gen[T],
+def for_all(gen: CTGenerator[T],
             property: Callable[[T], Union[Property, bool]]) -> Property:
     def property_wrapper(value: T) -> Property:
         outcome = property(value)
         if isinstance(outcome, bool):
-            return constant(TestResult(is_success=outcome, arguments=(value,)))
+            return always(TestResult(is_success=outcome, arguments=(value,)))
         else:
             return map(
-                lambda inner_out:
+                lambda inner_out:  # inner_out: TestResult
                 replace(inner_out, arguments=(value,) + inner_out.arguments),
                 outcome)
     return bind(property_wrapper, gen)
@@ -275,7 +299,6 @@ def test(property: Property):
     def do_shrink(tree: CandidateTree[TestResult]) -> None:
         for smaller in tree.candidates:
             if not smaller.value.is_success:
-                # cool, found a smaller value that still fails - keep shrinking
                 print(f"Shrinking: found smaller arguments {
                       smaller.value.arguments}")
                 do_shrink(smaller)
@@ -293,19 +316,25 @@ def test(property: Property):
     print("Success: 100 tests passed.")
 
 
-wrong_sum = for_all(list_of(int_between(-10, 10)), lambda lst:
-                    for_all(int_between(-10, 10), lambda i:
-                    sum(e+i for e in lst) == sum(lst) + (len(lst) + 1) * i))
+wrong_sum = for_all(list_of(
+    int_between(-10, 10)),
+    lambda lst:
+    for_all(int_between(-10, 10),
+            lambda i:
+            sum(e+i for e in lst) == sum(lst) + (len(lst) + 1) * i))
 
 equality = for_all(int_between(-10, 10), lambda lst:
                    for_all(int_between(-10, 10), lambda i: lst == i))
 
+age = int_between(0, 100)
 
-ages = int_between(0, 100)
-letters = map(chr, int_between(ord('a'), ord('z')))
-simple_names = map("".join, list_of_length(6, letters))
-persons = mapN(lambda a: Person(*a), (simple_names, ages))
-lists_of_person = list_of(persons)
+letter = map(chr, int_between(ord('a'), ord('z')))
+
+simple_name = map("".join, list_of_length(6, letter))
+
+person = mapN(lambda a: Person(*a), (simple_name, age))
+
+lists_of_person = list_of(person)
 
 prop_sort_by_age = for_all(
     lists_of_person,
@@ -314,3 +343,7 @@ prop_sort_by_age = for_all(
 prop_wrong_sort_by_age = for_all(
     lists_of_person,
     lambda persons_in: is_valid(persons_in, wrong_sort_by_age(persons_in)))
+
+prop_weird_shrink = for_all(
+    int_between(-20, -1),
+    lambda i: i * i < 0)
