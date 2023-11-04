@@ -30,8 +30,12 @@ def sample(gen: Generator[T]) -> list[T]:
     return [gen.generate()[0] for _ in range(10)]
 
 
-def constant(value: T) -> Generator[T]:
+def always(value: T) -> Generator[T]:
     return Generator(lambda _: (value, 0))
+
+
+constant = always
+pure = always
 
 
 def dec_size(min_size: Optional[Size], decrease: Size) -> Optional[Size]:
@@ -58,14 +62,14 @@ def int_between(low: int, high: int) -> Generator[int]:
     return Generator(generator)
 
 
-def map(func: Callable[[T], U], gen: Generator[T]) -> Generator[U]:
+def map(f: Callable[[T], U], gen: Generator[T]) -> Generator[U]:
     def generator(min_size: Optional[Size]):
         result, size = gen.generate(min_size)
-        return func(result), size
+        return f(result), size
     return Generator(generator)
 
 
-def mapN(func: Callable[..., T],
+def mapN(f: Callable[..., T],
          gens: Iterable[Generator[Any]]) -> Generator[T]:
     def generator(min_size: Optional[Size]):
         results: list[Any] = []
@@ -75,15 +79,15 @@ def mapN(func: Callable[..., T],
             min_size = dec_size(min_size, size)
             results.append(result)
             size_acc += size
-        return func(*results), size_acc
+        return f(*results), size_acc
     return Generator(generator)
 
 
-def bind(func: Callable[[T], Generator[U]], gen: Generator[T]) -> Generator[U]:
+def bind(f: Callable[[T], Generator[U]], gen: Generator[T]) -> Generator[U]:
     def generator(min_size: Optional[Size]):
         result, size_outer = gen.generate(min_size)
         min_size = dec_size(min_size, size_outer)
-        result, size_inner = func(result).generate(min_size)
+        result, size_inner = f(result).generate(min_size)
         size = size_inner+size_outer
         return result, size
     return Generator(generator)
@@ -106,7 +110,7 @@ def for_all(gen: Gen[T],
     def property_wrapper(value: T) -> Property:
         outcome = property(value)
         if isinstance(outcome, bool):
-            return constant(TestResult(is_success=outcome, arguments=(value,)))
+            return always(TestResult(is_success=outcome, arguments=(value,)))
         else:
             return map(
                 lambda inner_out:
@@ -126,12 +130,12 @@ def test(property: Property):
                 elif not result.is_success:
                     shrunk += 1
                     min_result, min_size = result, size
-                    # print(f"Shrinking: found smaller arguments {
-                    #     result.arguments}")
+                    print(f"Shrinking: found smaller arguments {
+                        result.arguments}")
                 else:
                     not_shrunk += 1
-                    # print(f"Shrinking: didn't work, smaller arguments {
-                    #     result.arguments} passed the test")
+                    print(f"Shrinking: didn't work, smaller arguments {
+                        result.arguments} passed the test")
             except SizeExceeded:
                 skipped += 1
 
