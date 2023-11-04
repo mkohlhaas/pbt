@@ -3,10 +3,10 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, replace
 from decimal import InvalidOperation
-from typing import (Any, Callable, Generic, Iterable, Optional, Tuple, TypeVar,
-                    Union)
+from typing import (Any, Callable, Generic, Iterable,
+                    Optional, Tuple, TypeVar, Union)
 
-from example import *
+from example import Person, is_valid, sort_by_age, wrong_sort_by_age
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -51,7 +51,7 @@ class ChoiceSeq:
         return ChoiceSeq(self.history[:self._replaying])
 
 
-class Random(Generic[T]):
+class Generator(Generic[T]):
     def __init__(self, generator: Callable[[ChoiceSeq], T]):
         self._generator = generator
 
@@ -59,29 +59,29 @@ class Random(Generic[T]):
         return self._generator(choose)
 
 
-def sample(gen: Random[T]) -> list[tuple[T, list[int]]]:
+def sample(gen: Generator[T]) -> list[tuple[T, list[int]]]:
     choose = ChoiceSeq()
     return [(gen.generate(choose), choose.history) for _ in range(10)]
 
 
-def constant(value: T) -> Random[T]:
-    return Random(lambda _: value)
+def constant(value: T) -> Generator[T]:
+    return Generator(lambda _: value)
 
 
-def int_between(low: int, high: int) -> Random[int]:
-    return Random(lambda choose: choose.randint(low, high))
+def int_between(low: int, high: int) -> Generator[int]:
+    return Generator(lambda choose: choose.randint(low, high))
 
 
-def map(func: Callable[[T], U], gen: Random[T]) -> Random[U]:
-    return Random(lambda choose: func(gen.generate(choose)))
+def map(f: Callable[[T], U], gen: Generator[T]) -> Generator[U]:
+    return Generator(lambda choose: f(gen.generate(choose)))
 
 
-def mapN(func: Callable[..., T], gens: Iterable[Random[Any]]) -> Random[T]:
-    return Random(lambda choose: func(*[gen.generate(choose) for gen in gens]))
+def mapN(f: Callable[..., T], gens: Iterable[Generator[Any]]) -> Generator[T]:
+    return Generator(lambda choose: f(*[gen.generate(choose) for gen in gens]))
 
 
-def bind(func: Callable[[T], Random[U]], gen: Random[T]) -> Random[U]:
-    return Random(lambda choose: func(gen.generate(choose)).generate(choose))
+def bind(f: Callable[[T], Generator[U]], gen: Generator[T]) -> Generator[U]:
+    return Generator(lambda choose: f(gen.generate(choose)).generate(choose))
 
 
 def shrink_int(value: int) -> Iterable[int]:
@@ -93,7 +93,7 @@ def shrink_int(value: int) -> Iterable[int]:
         yield 0
 
 
-Gen = Random[T]
+Gen = Generator[T]
 
 
 @dataclass(frozen=True)
@@ -105,13 +105,17 @@ class TestResult:
 Property = Gen[TestResult]
 
 
-def for_all(gen: Gen[T], property: Callable[[T], Union[Property, bool]]) -> Property:
+def for_all(gen: Gen[T],
+            property: Callable[[T], Union[Property, bool]]) -> Property:
     def property_wrapper(value: T) -> Property:
         outcome = property(value)
         if isinstance(outcome, bool):
             return constant(TestResult(is_success=outcome, arguments=(value,)))
         else:
-            return map(lambda inner_out: replace(inner_out, arguments=(value,) + inner_out.arguments), outcome)
+            return map(
+                lambda inner_out:
+                replace(inner_out, arguments=(value,) + inner_out.arguments),
+                outcome)
     return bind(property_wrapper, gen)
 
 
@@ -130,14 +134,14 @@ def test(property: Property):
             try:
                 result = property.generate(smaller_choice)
             except InvalidReplay:
-                # print(f"Shrinking: didn't work, invalid replay.")
+                print("Shrinking: didn't work, invalid replay.")
                 continue
             if not result.is_success:
-                # cool, found a smaller value that still fails - keep shrinking
                 print(f"Shrinking: found smaller arguments {result.arguments}")
                 do_shrink(smaller_choice.replayed_prefix())
                 break
-            # print(f"Shrinking: didn't work, smaller arguments {result.arguments} passed the test")
+            print(f"Shrinking: didn't work, smaller arguments {
+                result.arguments} passed the test")
         else:
             choices.replay()
             print(f"Shrinking: gave up at arguments {
@@ -151,35 +155,41 @@ def test(property: Property):
                   result.arguments}.")
             do_shrink(choices)
             return
-    print(f"Success: 100 tests passed.")
+    print("Success: 100 tests passed.")
 
 
 def list_of_gen(gens: Iterable[Gen[Any]]) -> Gen[list[Any]]:
     return mapN(lambda *args: list(args), gens)
 
 
-def list_of_length(l: int, gen: Gen[T]) -> Gen[list[T]]:
-    gen_of_list = list_of_gen([gen] * l)
+def list_of_length(n: int, gen: Gen[T]) -> Gen[list[T]]:
+    gen_of_list = list_of_gen([gen] * n)
     return gen_of_list
 
 
 def list_of(gen: Gen[T]) -> Gen[list[T]]:
     length = int_between(0, 10)
-    return bind(lambda l: list_of_length(l, gen), length)
+    return bind(lambda n: list_of_length(n, gen), length)
 
 
-wrong_sum = for_all(list_of(int_between(-10, 10)), lambda l:
-                    for_all(int_between(-10, 10), lambda i:
-                    sum(e+i for e in l) == sum(l) + (len(l) + 1) * i))
+wrong_sum = for_all(list_of(int_between(-10, 10)),
+                    lambda lst:
+                    for_all(int_between(-10, 10),
+                            lambda i:
+                    sum(e+i for e in lst) == sum(lst) + (len(lst) + 1) * i))
 
-equality = for_all(int_between(-10, 10), lambda l:
-                   for_all(int_between(-10, 10), lambda i: l == i))
+equality = for_all(int_between(-10, 10), lambda n:
+                   for_all(int_between(-10, 10), lambda i: n == i))
 
-ages = int_between(0, 100)
-letters = map(chr, int_between(ord('a'), ord('z')))
-simple_names = map("".join, list_of_length(6, letters))
-persons = mapN(Person, (simple_names, ages))
-lists_of_person = list_of(persons)
+age = int_between(0, 100)
+
+letter = map(chr, int_between(ord('a'), ord('z')))
+
+simple_name = map("".join, list_of_length(6, letter))
+
+person = mapN(Person, (simple_name, age))
+
+lists_of_person = list_of(person)
 
 prop_sort_by_age = for_all(
     lists_of_person,
@@ -192,6 +202,4 @@ prop_wrong_sort_by_age = for_all(
 # this doesn't work that well, for the second letter since we shrink by
 # halving the value
 equality_letters = (
-    for_all(letters, lambda l:
-            for_all(letters, lambda i: l == i))
-)
+    for_all(letter, lambda n: for_all(letter, lambda i: n == i)))
