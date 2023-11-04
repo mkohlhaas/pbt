@@ -38,7 +38,7 @@ constant = always
 pure = always
 
 
-def dec_size(min_size: Optional[Size], decrease: Size) -> Optional[Size]:
+def decrease_size(min_size: Optional[Size], decrease: Size) -> Optional[Size]:
     if min_size is None:
         return None
     smaller = min_size-decrease
@@ -57,7 +57,7 @@ def int_between(low: int, high: int) -> Generator[int]:
     def generator(min_size: Optional[Size]):
         value = random.randint(low, high)
         size = zig_zag(value)
-        dec_size(min_size, size)
+        decrease_size(min_size, size)
         return value, size
     return Generator(generator)
 
@@ -76,7 +76,7 @@ def mapN(f: Callable[..., T],
         size_acc = 0
         for gen in gens:
             result, size = gen.generate(min_size)
-            min_size = dec_size(min_size, size)
+            min_size = decrease_size(min_size, size)
             results.append(result)
             size_acc += size
         return f(*results), size_acc
@@ -86,7 +86,7 @@ def mapN(f: Callable[..., T],
 def bind(f: Callable[[T], Generator[U]], gen: Generator[T]) -> Generator[U]:
     def generator(min_size: Optional[Size]):
         result, size_outer = gen.generate(min_size)
-        min_size = dec_size(min_size, size_outer)
+        min_size = decrease_size(min_size, size_outer)
         result, size_inner = f(result).generate(min_size)
         size = size_inner+size_outer
         return result, size
