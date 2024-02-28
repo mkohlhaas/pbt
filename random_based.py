@@ -38,62 +38,61 @@ constant = always
 pure = always
 
 
-def decrease_size(min_size: Optional[Size], decrease: Size) -> Optional[Size]:
-    if min_size is None:
+# decrease_size can throw exception and short-circuits this way
+def decrease_size(prev_min_size: Optional[Size],
+                  curr_min_size: Size) -> Optional[Size]:
+    if prev_min_size is None:
         return None
-    smaller = min_size-decrease
+    smaller = prev_min_size-curr_min_size
     if smaller < 0:
-        raise SizeExceeded(f"{min_size=} {decrease=} {smaller=}")
+        raise SizeExceeded(f"{prev_min_size=} {curr_min_size=} {smaller=}")
     return smaller
 
 
 def int_between(low: int, high: int) -> Generator[int]:
     def zig_zag(i: int):
         if i < 0:
-            return -2*i - 1
+            return -1*i - 1
         else:
-            return 2*i
+            return 1*i
 
-    def generator(min_size: Optional[Size]):
+    def generator(prev_min_size: Optional[Size]):
         value = random.randint(low, high)
-        size = zig_zag(value)
-        decrease_size(min_size, size)
-        return value, size
+        curr_min_size = zig_zag(value)
+        decrease_size(prev_min_size, curr_min_size)
+        return value, curr_min_size
     return Generator(generator)
 
 
 def map(f: Callable[[T], U], gen: Generator[T]) -> Generator[U]:
-    def generator(min_size: Optional[Size]):
-        result, size = gen.generate(min_size)
+    def generator(curr_min_size: Optional[Size]):
+        result, size = gen.generate(curr_min_size)
         return f(result), size
     return Generator(generator)
 
 
 def mapN(f: Callable[..., T],
          gens: Iterable[Generator[Any]]) -> Generator[T]:
-    def generator(min_size: Optional[Size]):
+    def generator(prev_min_size: Optional[Size]):
         results: list[Any] = []
         size_acc = 0
         for gen in gens:
-            result, size = gen.generate(min_size)
-            min_size = decrease_size(min_size, size)
+            result, curr_min_size = gen.generate(prev_min_size)
+            prev_min_size = decrease_size(prev_min_size, curr_min_size)
             results.append(result)
-            size_acc += size
+            size_acc += curr_min_size
         return f(*results), size_acc
     return Generator(generator)
 
 
 def bind(f: Callable[[T], Generator[U]], gen: Generator[T]) -> Generator[U]:
-    def generator(min_size: Optional[Size]):
-        result, size_outer = gen.generate(min_size)
-        min_size = decrease_size(min_size, size_outer)
+    def generator(prev_min_size: Optional[Size]):
+        result, size_outer = gen.generate(prev_min_size)
+        min_size = decrease_size(prev_min_size, size_outer)
         result, size_inner = f(result).generate(min_size)
-        size = size_inner+size_outer
-        return result, size
+        curr_min_size = size_inner+size_outer
+        return result, curr_min_size
     return Generator(generator)
-
-
-Gen = Generator[T]
 
 
 @dataclass(frozen=True)
@@ -102,10 +101,10 @@ class TestResult:
     arguments: Tuple[Any, ...]
 
 
-Property = Gen[TestResult]
+Property = Generator[TestResult]
 
 
-def for_all(gen: Gen[T],
+def for_all(gen: Generator[T],
             property: Callable[[T], Union[Property, bool]]) -> Property:
     def property_wrapper(value: T) -> Property:
         outcome = property(value)
@@ -122,21 +121,23 @@ def for_all(gen: Gen[T],
 def test(property: Property):
     def find_smaller(min_result: TestResult, min_size: Size):
         skipped, not_shrunk, shrunk = 0, 0, 0
+        # try a 100000 times
         while skipped + not_shrunk + shrunk <= 100_000 and min_size > 0:
             try:
-                result, size = property.generate(min_size)
-                if size >= min_size:
+                result, new_min_size = property.generate(min_size)
+                if new_min_size >= min_size:  # new value not interesting
                     skipped += 1
-                elif not result.is_success:
+                elif not result.is_success:  # new_min_size is smaller
                     shrunk += 1
-                    min_result, min_size = result, size
+                    # in Python function arguments are passed by reference
+                    min_result, min_size = result, new_min_size
                     print(f"Shrinking: found smaller arguments {
                         result.arguments}")
                 else:
                     not_shrunk += 1
                     print(f"Shrinking: didn't work, smaller arguments {
                         result.arguments} passed the test")
-            except SizeExceeded:
+            except SizeExceeded:  # can only happen in decrease_size
                 skipped += 1
 
         print(f"Shrinking: gave up at arguments {min_result.arguments}")
@@ -152,20 +153,19 @@ def test(property: Property):
     print("Success: 100 tests passed.")
 
 
-# we don't even have to change the definition of letters!
 letter = map(chr, int_between(ord('a'), ord('z')))
 
 
-def list_of_gen(gens: Iterable[Gen[Any]]) -> Gen[list[Any]]:
+def list_of_gen(gens: Iterable[Generator[Any]]) -> Generator[list[Any]]:
     return mapN(lambda *args: list(args), gens)
 
 
-def list_of_length(n: int, gen: Gen[T]) -> Gen[list[T]]:
+def list_of_length(n: int, gen: Generator[T]) -> Generator[list[T]]:
     gen_of_list = list_of_gen([gen] * n)
     return gen_of_list
 
 
-def list_of(gen: Gen[T]) -> Gen[list[T]]:
+def list_of(gen: Generator[T]) -> Generator[list[T]]:
     length = int_between(0, 10)
     return bind(lambda n: list_of_length(n, gen), length)
 
